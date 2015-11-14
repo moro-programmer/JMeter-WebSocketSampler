@@ -46,6 +46,8 @@ public class ServiceSocket {
     protected Pattern responseExpression;
     protected Pattern disconnectExpression;
     protected boolean connected = false;
+    private boolean closed = false;
+    private boolean disconnectMatch;
     private String connectionId;
 
     public ServiceSocket(WebSocketSampler parent, WebSocketClient client, String connectionId) {
@@ -64,13 +66,15 @@ public class ServiceSocket {
 
     @OnWebSocketMessage
     public void onMessage(String msg) {
+
         synchronized (parent) {
-            LOG.debug("Received message: " + msg);
             String length = " (" + msg.length() + " bytes)";
+            boolean responseMatch = responseExpression == null || responseExpression.matcher(msg).find();
+            disconnectMatch = !disconnectPattern.isEmpty() && disconnectExpression.matcher(msg).find();
+
+            LOG.debug("Received message: " + msg);
             logMessage.append(" - Received message #").append(messageCounter).append(length);
             addResponseMessage("[Message " + (messageCounter++) + "]\n" + msg + "\n\n");
-            boolean responseMatch = responseExpression == null || responseExpression.matcher(msg).find();
-            boolean disconnectMatch = !disconnectPattern.isEmpty() && disconnectExpression.matcher(msg).find();
 
             if (responseMatch) {
                 logMessage.append("; matched response pattern").append("\n");
@@ -100,8 +104,8 @@ public class ServiceSocket {
             String frameTxt = new String(frame.getPayload().array());
             addResponseMessage("[Frame " + (messageCounter++) + "]\n" + frameTxt + "\n\n");
 
-            boolean disconnectMatch = !disconnectPattern.isEmpty() && disconnectExpression.matcher(frameTxt).find();
             boolean responseMatch = responseExpression == null || responseExpression.matcher(frameTxt).find();
+            disconnectMatch = !disconnectPattern.isEmpty() && disconnectExpression.matcher(frameTxt).find();
 
             if (responseMatch) {
                 logMessage.append("; matched response pattern").append("\n");
@@ -164,7 +168,7 @@ public class ServiceSocket {
 
     public boolean awaitClose(int duration, TimeUnit unit) throws InterruptedException {
         logMessage.append(" - Waiting for messages for ").append(duration).append(" ").append(unit.toString()).append("\n");
-        boolean res = this.closeLatch.await(duration, unit);
+        boolean result = this.closeLatch.await(duration, unit);
 
         if (!parent.isStreamingConnection()) {
             close(StatusCode.NORMAL, "JMeter closed session.");
@@ -172,12 +176,12 @@ public class ServiceSocket {
             logMessage.append(" - Leaving streaming connection open").append("\n");
         }
 
-        return res;
+        return result;
     }
 
     public boolean awaitOpen(int duration, TimeUnit unit) throws InterruptedException {
         logMessage.append(" - Waiting for the server connection for ").append(duration).append(" ").append(unit.toString()).append("\n");
-        boolean res = this.openLatch.await(duration, unit);
+        boolean result = this.openLatch.await(duration, unit);
 
         if (connected) {
             logMessage.append(" - Connection established").append("\n");
@@ -185,14 +189,7 @@ public class ServiceSocket {
             logMessage.append(" - Cannot connect to the remote server").append("\n");
         }
 
-        return res;
-    }
-
-    /**
-     * @return the session
-     */
-    public Session getSession() {
-        return session;
+        return result;
     }
 
     public void sendMessage(String message) throws IOException {
@@ -204,6 +201,8 @@ public class ServiceSocket {
     }
 
     public void close(int statusCode, String statusText) {
+        closed = true;
+
         //Closing WebSocket session
         if (session != null) {
             session.close(statusCode, statusText);
@@ -212,7 +211,7 @@ public class ServiceSocket {
             logMessage.append(" - WebSocket session wasn't started (...that's odd)").append("\n");
         }
 
-        //Stoping WebSocket client; thanks m0ro
+        //Stopping WebSocket client; thanks m0ro
         try {
             client.stop();
             logMessage.append(" - WebSocket client closed by the client").append("\n");
@@ -265,13 +264,6 @@ public class ServiceSocket {
 
     }
 
-    /**
-     * @return the connected
-     */
-    public boolean isConnected() {
-        return connected;
-    }
-
     public void initialize() {
         logMessage = new StringBuffer();
         logMessage.append("\n\n[Execution Flow]\n");
@@ -299,5 +291,9 @@ public class ServiceSocket {
 
     public String getConnectionId() {
         return connectionId;
+    }
+
+    public boolean shouldClose() {
+        return closed || disconnectMatch;
     }
 }

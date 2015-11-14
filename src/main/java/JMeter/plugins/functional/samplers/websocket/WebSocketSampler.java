@@ -94,9 +94,13 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
             connectionTimeout = DEFAULT_CONNECTION_TIMEOUT;
         }
 
-        socket.awaitOpen(connectionTimeout, TimeUnit.MILLISECONDS);
-
-        return socket;
+        if (socket.awaitOpen(connectionTimeout, TimeUnit.MILLISECONDS)) {
+            return socket;
+        } else {
+            connectionList.remove(connectionId);
+            socket.close();
+            return null;
+        }
     }
 
     @Override
@@ -185,7 +189,7 @@ public class WebSocketSampler extends AbstractSampler implements TestStateListen
         String logMessage = (socket != null) ? socket.getLogMessage() : "";
         sampleResult.setResponseMessage(logMessage + errorList);
 
-        if (socket != null && isStreamingConnection() && isLastStreamingConnection()) {
+        if (socket != null && ((isStreamingConnection() && isLastStreamingConnection()) || socket.shouldClose())) {
             ServiceSocket removed = connectionList.remove(socket.getConnectionId());
             removed.close();
         }
