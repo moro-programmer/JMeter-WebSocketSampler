@@ -45,9 +45,10 @@ public class ServiceSocket {
     protected int messageCounter = 1;
     protected Pattern responseExpression;
     protected Pattern disconnectExpression;
-    protected boolean connected = false;
-    private boolean closed = false;
+    protected boolean connected;
+    private boolean closed;
     private boolean disconnectMatch;
+    private boolean responseMatch;
     private String connectionId;
 
     public ServiceSocket(WebSocketSampler parent, WebSocketClient client, String connectionId) {
@@ -56,7 +57,7 @@ public class ServiceSocket {
         this.connectionId = connectionId;
         initializePatterns(parent.getResponsePattern(), parent.getCloseConncectionPattern());
 
-        //Evaluate response matching patterns in case thay contain JMeter variables (i.e. ${var})
+        //Evaluate response matching patterns in case they contain JMeter variables (i.e. ${var})
         responsePattern = new CompoundVariable(parent.getResponsePattern()).execute();
         disconnectPattern = new CompoundVariable(parent.getCloseConncectionPattern()).execute();
         logMessage.append("\n\n[Execution Flow]\n");
@@ -69,7 +70,7 @@ public class ServiceSocket {
 
         synchronized (parent) {
             String length = " (" + msg.length() + " bytes)";
-            boolean responseMatch = responseExpression == null || responseExpression.matcher(msg).find();
+            responseMatch = responseExpression == null || responseExpression.matcher(msg).find();
             disconnectMatch = !disconnectPattern.isEmpty() && disconnectExpression.matcher(msg).find();
 
             LOG.debug("Received message: " + msg);
@@ -80,6 +81,7 @@ public class ServiceSocket {
                 logMessage.append("; matched response pattern").append("\n");
                 closeLatch.countDown();
             }
+
             if (disconnectMatch) {
                 logMessage.append("; matched connection close pattern").append("\n");
                 if (!responseMatch) {
@@ -104,7 +106,7 @@ public class ServiceSocket {
             String frameTxt = new String(frame.getPayload().array());
             addResponseMessage("[Frame " + (messageCounter++) + "]\n" + frameTxt + "\n\n");
 
-            boolean responseMatch = responseExpression == null || responseExpression.matcher(frameTxt).find();
+            responseMatch = responseExpression == null || responseExpression.matcher(frameTxt).find();
             disconnectMatch = !disconnectPattern.isEmpty() && disconnectExpression.matcher(frameTxt).find();
 
             if (responseMatch) {
@@ -240,13 +242,15 @@ public class ServiceSocket {
     public void initializePatterns(String responsePattern, String closeConncectionPattern) {
         this.responsePattern = new CompoundVariable(responsePattern).execute();
         this.disconnectPattern = new CompoundVariable(closeConncectionPattern).execute();
+        this.disconnectMatch = false;
+        this.responseMatch = false;
         initializePatterns();
     }
 
     protected void initializePatterns() {
         try {
             logMessage.append(" - Using response message pattern \"").append(responsePattern).append("\"\n");
-            responseExpression = (responsePattern == null || responsePattern.isEmpty()) ? null : Pattern.compile(responsePattern);
+            responseExpression = isEmpty(responsePattern) ? null : Pattern.compile(responsePattern);
         } catch (Exception ex) {
             logMessage.append(" - Invalid response message regular expression pattern: ").append(ex.getLocalizedMessage()).append("\n");
             LOG.error("Invalid response message regular expression pattern: " + ex.getLocalizedMessage());
@@ -255,7 +259,7 @@ public class ServiceSocket {
 
         try {
             logMessage.append(" - Using disconnect pattern \"").append(disconnectPattern).append("\"\n");
-            disconnectExpression = (disconnectPattern == null || disconnectPattern.isEmpty()) ? null : Pattern.compile(disconnectPattern);
+            disconnectExpression = isEmpty(disconnectPattern) ? null : Pattern.compile(disconnectPattern);
         } catch (Exception ex) {
             logMessage.append(" - Invalid disconnect regular expression pattern: ").append(ex.getLocalizedMessage()).append("\n");
             LOG.error("Invalid disconnect regular regular expression pattern: " + ex.getLocalizedMessage());
@@ -293,7 +297,11 @@ public class ServiceSocket {
         return connectionId;
     }
 
+    private boolean isEmpty(String value) {
+        return value == null || value.isEmpty();
+    }
+
     public boolean shouldClose() {
-        return closed || disconnectMatch;
+        return closed || disconnectMatch || (!isEmpty(responsePattern) && !responseMatch);
     }
 }
